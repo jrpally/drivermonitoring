@@ -112,6 +112,8 @@ internal sealed partial class DriverManager : IDisposable
         return true;
     }
 
+    public bool IsConnected => _port is { IsInvalid: false };
+
     public void Disconnect()
     {
         _port?.Dispose();

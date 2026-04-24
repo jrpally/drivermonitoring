@@ -2,10 +2,16 @@
 //
 // FileMonitor Live — self-contained file system monitor.
 // Extracts the minifilter driver, installs it, monitors events,
+// hosts a gRPC server on localhost:50051 for remote clients,
 // and cleans up everything on exit. Like Sysinternals Process Monitor.
 
 using System.Security.Principal;
+using FileMonitor.Grpc;
 using FileMonitor.Live;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.Extensions.DependencyInjection;
 
 // ── Admin check ─────────────────────────────────────────────────────────
 var identity = WindowsIdentity.GetCurrent();
@@ -18,23 +24,41 @@ if (!principal.IsInRole(WindowsBuiltInRole.Administrator))
     return 1;
 }
 
-// ── Setup ───────────────────────────────────────────────────────────────
-using var manager = new DriverManager();
-var cts = new CancellationTokenSource();
+// ── Build gRPC host ──────────────────────────────────────────────────────
+var manager     = new DriverManager();
+var broadcaster = new LiveEventBroadcaster();
+var cts         = new CancellationTokenSource();
+
+var webBuilder = WebApplication.CreateBuilder(args);
+webBuilder.WebHost.ConfigureKestrel(options =>
+    options.ListenLocalhost(50051, lo => lo.Protocols = HttpProtocols.Http2));
+webBuilder.Services.AddGrpc();
+webBuilder.Services.AddSingleton(broadcaster);
+webBuilder.Services.AddSingleton(manager);
+var app = webBuilder.Build();
+app.MapGrpcService<LiveFileMonitorGrpcService>();
 
 // Ensure cleanup on Ctrl+C, console close, process exit
-Console.CancelKeyPress += (_, e) =>
+Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+AppDomain.CurrentDomain.ProcessExit += (_, _) =>
 {
-    e.Cancel = true;
-    cts.Cancel();
+    broadcaster.Complete();
+    manager.Dispose();
 };
-AppDomain.CurrentDomain.ProcessExit += (_, _) => manager.Dispose();
 
+// ── Banner ───────────────────────────────────────────────────────────────
 Console.ForegroundColor = ConsoleColor.Cyan;
 Console.WriteLine("╔══════════════════════════════════════════════════╗");
 Console.WriteLine("║          FileMonitor Live  —  Rene Pally        ║");
 Console.WriteLine("║   Self-contained file system event monitor      ║");
 Console.WriteLine("╚══════════════════════════════════════════════════╝");
+Console.ResetColor();
+Console.WriteLine();
+
+// ── Start gRPC server ────────────────────────────────────────────────────
+await app.StartAsync();
+Console.ForegroundColor = ConsoleColor.DarkCyan;
+Console.WriteLine("gRPC server listening on  http://localhost:50051");
 Console.ResetColor();
 Console.WriteLine();
 
@@ -108,10 +132,11 @@ var listenerTask = Task.Run(() =>
         var n = notification.Value;
         var time = DateTime.Now.ToString("HH:mm:ss.ff");
         var processName = DriverManager.ResolveProcessName(n.ProcessId);
-        if (processName.Length > 18) processName = processName[..18] + "…";
+        if (processName.Length > 18) processName = processName[..18] + "\u2026";
         var eventName = GetEventName(n.EventType);
         var color = GetEventColor(n.EventType);
 
+        // ── Console display ──────────────────────────────────────────────
         lock (Console.Out)
         {
             Console.ForegroundColor = ConsoleColor.DarkGray;
@@ -125,6 +150,17 @@ var listenerTask = Task.Run(() =>
             Console.ResetColor();
             Console.WriteLine(n.FilePath);
         }
+
+        // ── Broadcast to gRPC subscribers ────────────────────────────────
+        broadcaster.Publish(new FileEvent
+        {
+            EventType   = (FileEventType)n.EventType,
+            FilePath    = n.FilePath ?? string.Empty,
+            ProcessId   = n.ProcessId,
+            ThreadId    = n.ThreadId,
+            Timestamp   = n.Timestamp,
+            ProcessName = processName,
+        });
     }
 }, cts.Token);
 
@@ -163,6 +199,12 @@ Console.ResetColor();
 
 try { await listenerTask.WaitAsync(TimeSpan.FromSeconds(3)); }
 catch { /* listener may already be done */ }
+
+// Signal all gRPC subscribers that the stream is ending
+broadcaster.Complete();
+
+// Stop the gRPC server
+await app.StopAsync();
 
 // Dispose triggers Uninstall → fltmc unload → sc delete → cleanup
 manager.Dispose();
