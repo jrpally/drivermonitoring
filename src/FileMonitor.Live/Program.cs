@@ -146,15 +146,3 @@ static void WriteFail(string message)
     Console.ResetColor();
 }
 
-
-// ── Admin check ─────────────────────────────────────────────────────────
-var identity = WindowsIdentity.GetCurrent();
-var principal = new WindowsPrincipal(identity);
-if (!principal.IsInRole(WindowsBuiltInRole.Administrator))
-{
-    Console.ForegroundColor = ConsoleColor.Red;
-    Console.Error.WriteLine("ERROR: Must run as Administrator.");
-    Console.ResetColor();
-    return 1;
-}
-
