@@ -24,14 +24,36 @@ if (-not (Test-Path $clExe)) { throw "cl.exe not found at $clExe" }
 
 # --- Locate WDK ---
 $wdkRoot = "C:\Program Files (x86)\Windows Kits\10"
-$wdkVersions = Get-ChildItem "$wdkRoot\Include" -Directory |
-    Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' -and (Test-Path "$wdkRoot\Include\$($_.Name)\km") } |
-    Sort-Object Name -Descending
-$wdkVer = $wdkVersions[0].Name
 
-Write-Host "MSVC : $msvcDir" -ForegroundColor Cyan
-Write-Host "WDK  : $wdkVer" -ForegroundColor Cyan
-Write-Host "Config: $Configuration | $Platform" -ForegroundColor Cyan
+# Find the newest version that has kernel-mode (km) headers
+$wdkVer = (Get-ChildItem "$wdkRoot\Include" -Directory |
+    Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' -and
+                   (Test-Path "$wdkRoot\Include\$($_.Name)\km") } |
+    Sort-Object Name -Descending |
+    Select-Object -First 1).Name
+if (-not $wdkVer) { throw "WDK km headers not found under $wdkRoot\Include" }
+
+# Find the newest version that has shared\specstrings.h (comes from the Windows SDK,
+# may differ from the WDK version on CI runners where SDK and WDK versions diverge)
+$sdkVer = (Get-ChildItem "$wdkRoot\Include" -Directory |
+    Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' -and
+                   (Test-Path "$wdkRoot\Include\$($_.Name)\shared\specstrings.h") } |
+    Sort-Object Name -Descending |
+    Select-Object -First 1).Name
+if (-not $sdkVer) {
+    # Fallback: use any version that has a shared directory
+    $sdkVer = (Get-ChildItem "$wdkRoot\Include" -Directory |
+        Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' -and
+                       (Test-Path "$wdkRoot\Include\$($_.Name)\shared") } |
+        Sort-Object Name -Descending |
+        Select-Object -First 1).Name
+}
+if (-not $sdkVer) { throw "Windows SDK shared headers not found under $wdkRoot\Include" }
+
+Write-Host "MSVC       : $msvcDir" -ForegroundColor Cyan
+Write-Host "WDK (km)   : $wdkVer" -ForegroundColor Cyan
+Write-Host "SDK (shared): $sdkVer" -ForegroundColor Cyan
+Write-Host "Config      : $Configuration | $Platform" -ForegroundColor Cyan
 Write-Host ""
 
 # --- Paths ---
@@ -42,10 +64,10 @@ $objDir = "$PSScriptRoot\..\build\obj\driver\$Configuration\$Platform"
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 New-Item -ItemType Directory -Force -Path $objDir | Out-Null
 
-$kmInclude  = "$wdkRoot\Include\$wdkVer\km"
-$sharedInc  = "$wdkRoot\Include\$wdkVer\shared"
-$kmLib      = "$wdkRoot\lib\$wdkVer\km\$Platform"
-$ucrtKmInc  = "$wdkRoot\Include\$wdkVer\km\crt"
+$kmInclude = "$wdkRoot\Include\$wdkVer\km"
+$ucrtKmInc = "$wdkRoot\Include\$wdkVer\km\crt"
+$sharedInc = "$wdkRoot\Include\$sdkVer\shared"   # SDK version — has specstrings.h
+$kmLib     = "$wdkRoot\lib\$wdkVer\km\$Platform"
 
 # --- Compiler flags ---
 $defines = @(
