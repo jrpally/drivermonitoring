@@ -199,7 +199,16 @@ jobs:
           Write-Host "Created $zip"
           "ZIP_NAME=$zip" | Out-File $env:GITHUB_OUTPUT -Append
 
-      # ── 9. Create GitHub Release (tags only) ────────────────────────────────
+      # ── 9. Upload workflow artifact (every build) ────────────────────────────
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FileMonitor-v${{ steps.ver.outputs.VERSION }}-win-x64
+          path: ${{ steps.pkg.outputs.ZIP_NAME }}
+          retention-days: 30
+          if-no-files-found: error
+
+      # ── 10. Create GitHub Release (tags only) ────────────────────────────────
       - name: Create GitHub Release
         if: steps.ver.outputs.IS_RELEASE == 'true'
         uses: softprops/action-gh-release@v2
