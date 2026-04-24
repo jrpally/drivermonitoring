@@ -119,170 +119,38 @@ You should see `FileMonitorDriver` at altitude `370020`.
 
 FileMonitor exposes a **gRPC server** on `http://localhost:50051`. Any gRPC-capable language can connect to it. The service definition is in [proto/file_monitor.proto](proto/file_monitor.proto).
 
-### 2.1 C# — using the FileMonitor.Client SDK
+### 2.1 C# — FileMonitor.Client SDK
 
-The pre-built `FileMonitor.Client.dll` is the easiest way to subscribe to events from C#. It is included in every release under the `client\` folder.
+The SDK (`FileMonitor.Client.dll`) is included in every release zip under `client\`.  
+Full guide, code samples, and API reference: **[live/examples/csharp/README.md](live/examples/csharp/README.md)**
 
-#### Where to find the SDK
-
-After extracting the release zip:
-
-```
-C:\FileMonitor\client\FileMonitor.Client.dll
-C:\FileMonitor\client\FileMonitor.Client.deps.json
-```
-
-#### Add it to your project
-
-**Option A — copy the DLL** (recommended for distribution):
-
-1. Copy `FileMonitor.Client.dll` (and `FileMonitor.Client.deps.json`) into your project directory, e.g. `libs\`.
-2. Add a reference in your `.csproj`:
-
-   ```xml
-   <ItemGroup>
-     <Reference Include="FileMonitor.Client">
-       <HintPath>libs\FileMonitor.Client.dll</HintPath>
-     </Reference>
-   </ItemGroup>
-   ```
-
-**Option B — project reference** (if you cloned this repository):
-
-```xml
-<ItemGroup>
-  <ProjectReference Include="..\path\to\driverproject\src\FileMonitor.Client\FileMonitor.Client.csproj" />
-</ItemGroup>
-```
-
-> The SDK targets `net8.0`. Your consuming project must also target `net8.0` or later.
-
-**Subscribe to all events:**
+Quick look:
 
 ```csharp
 using FileMonitor.Client;
 
-// FileMonitor.exe must be running before you connect
 using var client = new FileMonitorClient("http://localhost:50051");
+client.OnFileEvent += evt => Console.WriteLine($"[{evt.EventType}] {evt.FilePath}");
+client.StartSubscription();   // non-blocking
 
-client.OnFileEvent += evt =>
-{
-    Console.WriteLine($"[{evt.EventType,-10}] {evt.FilePath}  (PID {evt.ProcessId} — {evt.ProcessName})");
-};
-
-client.OnDisconnected += ex =>
-{
-    if (ex != null) Console.Error.WriteLine($"Disconnected: {ex.Message}");
-};
-
-// Begin receiving events (non-blocking, runs on a background Task)
-client.StartSubscription();
-
-Console.WriteLine("Listening. Press Enter to quit.");
 Console.ReadLine();
 ```
 
-**Filter by event type and path prefix:**
+### 2.2 Python — grpcio
 
-```csharp
-using FileMonitor.Grpc;
+Generate stubs from the proto file and connect with `grpcio`.  
+Full guide including stub generation, filtering, timestamp decoding, and control RPCs: **[live/examples/python/README.md](live/examples/python/README.md)**
 
-client.StartSubscription(
-    eventFilter: (uint)(FileEventType.FileEventWrite | FileEventType.FileEventDelete),
-    pathFilter:  @"\Device\HarddiskVolume3\Users\Alice"
-);
-```
-
-`eventFilter` is a bitmask — combine values from the `FileEventType` enum. Pass `0` to receive all events.
-
-**Control monitoring at runtime:**
-
-```csharp
-await client.StopMonitoringAsync();   // pause the driver
-await client.StartMonitoringAsync();  // resume
-
-var status = await client.GetStatusAsync();
-Console.WriteLine($"Driver connected : {status.IsDriverConnected}");
-Console.WriteLine($"Monitoring active: {status.IsMonitoring}");
-Console.WriteLine($"Events processed : {status.EventsProcessed}");
-Console.WriteLine($"Active clients   : {status.ActiveSubscribers}");
-```
-
-**Available event types:**
-
-| Name | Value | Triggered when |
-|---|---|---|
-| `FILE_EVENT_CREATE`   | 1   | A file is created or opened |
-| `FILE_EVENT_CLOSE`    | 2   | A file handle is closed |
-| `FILE_EVENT_READ`     | 4   | A file is read |
-| `FILE_EVENT_WRITE`    | 8   | Data is written to a file |
-| `FILE_EVENT_DELETE`   | 16  | A file is deleted |
-| `FILE_EVENT_RENAME`   | 32  | A file is renamed or moved |
-| `FILE_EVENT_SET_INFO` | 64  | File metadata is changed |
-| `FILE_EVENT_CLEANUP`  | 128 | The last handle to a file is closed |
-
-A working example lives in [live/examples/csharp/](live/examples/csharp/).
-
-```cmd
-cd live\examples\csharp
-dotnet run
-```
-
-### 2.2 Python — using grpcio directly
-
-**Install dependencies:**
-
-```cmd
-pip install grpcio grpcio-tools
-```
-
-**Generate Python stubs from the proto file (run once):**
-
-```cmd
-cd live\examples\python
-generate_stubs.bat
-```
-
-This creates `file_monitor_pb2.py` and `file_monitor_pb2_grpc.py` in the same directory.
-
-**Subscribe to events:**
+Quick look:
 
 ```python
-import grpc
-import file_monitor_pb2
-import file_monitor_pb2_grpc
+import grpc, file_monitor_pb2, file_monitor_pb2_grpc
 
-with grpc.insecure_channel("localhost:50051") as channel:
-    stub = file_monitor_pb2_grpc.FileMonitorServiceStub(channel)
-
-    # Check status
-    status = stub.GetStatus(file_monitor_pb2.StatusRequest())
-    print(f"Driver connected: {status.is_driver_connected}")
-    print(f"Monitoring active: {status.is_monitoring}")
-
-    # Subscribe — server-streaming RPC
-    request = file_monitor_pb2.SubscribeRequest(
-        event_filter=0,   # 0 = all events
-        path_filter="",   # "" = no filter
-    )
-    for event in stub.Subscribe(request):
-        print(f"[{event.event_type}] {event.file_path}  PID={event.process_id}")
+with grpc.insecure_channel("localhost:50051") as ch:
+    stub = file_monitor_pb2_grpc.FileMonitorServiceStub(ch)
+    for event in stub.Subscribe(file_monitor_pb2.SubscribeRequest()):
+        print(f"[{event.event_type}] {event.file_path}")
 ```
-
-**Timestamp decoding** — `event.timestamp` is in .NET ticks (100-nanosecond intervals since 0001-01-01 UTC). Convert to a Python `datetime`:
-
-```python
-from datetime import datetime, timezone, timedelta
-
-TICKS_PER_SECOND = 10_000_000
-EPOCH_TICKS = 621_355_968_000_000_000   # ticks from 0001-01-01 to 1970-01-01
-
-def ticks_to_datetime(ticks: int) -> datetime:
-    unix_seconds = (ticks - EPOCH_TICKS) / TICKS_PER_SECOND
-    return datetime.fromtimestamp(unix_seconds, tz=timezone.utc)
-```
-
-A complete working example lives in [live/examples/python/client.py](live/examples/python/client.py).
 
 ### 2.3 Any other language
 
