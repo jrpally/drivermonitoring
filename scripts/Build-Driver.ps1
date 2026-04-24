@@ -82,6 +82,7 @@ if ($Configuration -eq "Debug") {
 $includes = @(
     "/I`"$srcDir`""
     "/I`"$ucrtKmInc`""
+    "/I`"$msvcDir\include`""  # specstrings.h / sal.h live here in VS 2022+
     "/I`"$kmInclude`""
     "/I`"$sharedInc`""
 )
