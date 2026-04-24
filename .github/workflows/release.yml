@@ -1,0 +1,134 @@
+name: Build & Release
+
+# Triggered by a version tag: v1.2.3
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write   # required to create a GitHub release
+
+    steps:
+      # ── 1. Source ────────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 2. Version ───────────────────────────────────────────────────────────
+      - name: Extract version from tag
+        id: ver
+        shell: pwsh
+        run: |
+          $tag     = "${{ github.ref_name }}"           # e.g. v1.2.3
+          $version = $tag.TrimStart('v')                # e.g. 1.2.3
+          "VERSION=$version" | Out-File $env:GITHUB_OUTPUT -Append
+          "TAG=$tag"         | Out-File $env:GITHUB_OUTPUT -Append
+          Write-Host "Building version $version"
+
+      # ── 3. Toolchain ─────────────────────────────────────────────────────────
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install Windows Driver Kit (WDK)
+        shell: pwsh
+        run: |
+          # WDK for Windows 11 24H2 (10.0.26100)
+          $wdkUrl   = "https://go.microsoft.com/fwlink/?linkid=2249371"
+          $installer = "$env:TEMP\wdksetup.exe"
+          Write-Host "Downloading WDK..."
+          Invoke-WebRequest -Uri $wdkUrl -OutFile $installer -UseBasicParsing
+          Write-Host "Installing WDK silently..."
+          $proc = Start-Process -Wait -PassThru -FilePath $installer `
+                    -ArgumentList "/quiet /norestart /ceip off"
+          if ($proc.ExitCode -ne 0) { throw "WDK installer exited with code $($proc.ExitCode)" }
+          Write-Host "WDK installed."
+
+      # ── 4. Stamp version ─────────────────────────────────────────────────────
+      - name: Stamp DriverVer in INF
+        shell: pwsh
+        run: |
+          $version = "${{ steps.ver.outputs.VERSION }}"
+          $date    = (Get-Date -Format "MM/dd/yyyy")
+          $inf     = "src\driver\FileMonitorDriver\FileMonitorDriver.inf"
+          $content = Get-Content $inf -Raw
+          $content = $content -replace 'DriverVer\s*=\s*[^\r\n]+', "DriverVer   = $date,$version.0"
+          Set-Content $inf $content -NoNewline
+          Write-Host "DriverVer set to: $date,$version.0"
+
+      # ── 5. Build driver ───────────────────────────────────────────────────────
+      - name: Build minifilter driver
+        shell: pwsh
+        run: .\scripts\Build-Driver.ps1 -Configuration Release
+
+      # ── 6. Build .NET solution ────────────────────────────────────────────────
+      - name: Restore NuGet packages
+        run: dotnet restore FileMonitor.sln
+
+      - name: Build solution (Release)
+        shell: pwsh
+        run: |
+          $v = "${{ steps.ver.outputs.VERSION }}"
+          dotnet build FileMonitor.sln -c Release --no-restore `
+            /p:Version=$v /p:AssemblyVersion="$v.0" /p:FileVersion="$v.0"
+
+      # ── 7. Publish self-contained Live app ────────────────────────────────────
+      - name: Publish FileMonitor.Live (single-file)
+        shell: pwsh
+        run: |
+          $v = "${{ steps.ver.outputs.VERSION }}"
+          dotnet publish src\FileMonitor.Live\FileMonitor.Live.csproj `
+            -c Release -r win-x64 --self-contained `
+            /p:PublishSingleFile=true `
+            /p:Version=$v /p:AssemblyVersion="$v.0" /p:FileVersion="$v.0" `
+            -o "staging\live"
+
+      # ── 8. Package artifacts ──────────────────────────────────────────────────
+      - name: Package release artifacts
+        shell: pwsh
+        run: |
+          $v    = "${{ steps.ver.outputs.VERSION }}"
+          $base = "staging"
+
+          # Driver binaries
+          $null = New-Item "$base\driver" -ItemType Directory -Force
+          Copy-Item "bin\Release\x64\FileMonitorDriver.sys" "$base\driver\"
+          Copy-Item "bin\Release\x64\FileMonitorDriver.inf" "$base\driver\"
+
+          # Windows Service
+          $null = New-Item "$base\service" -ItemType Directory -Force
+          Copy-Item "bin\Release\net8.0-windows\win-x64\*" "$base\service\" `
+            -Recurse -Exclude "*.pdb","*.xml"
+
+          # Client library (for developers)
+          $null = New-Item "$base\client" -ItemType Directory -Force
+          Copy-Item "bin\Release\net8.0\FileMonitor.Client.dll" "$base\client\"
+          Copy-Item "bin\Release\net8.0\FileMonitor.Client.deps.json" "$base\client\" -ErrorAction SilentlyContinue
+
+          # Deployment scripts
+          $null = New-Item "$base\scripts" -ItemType Directory -Force
+          Copy-Item "scripts\Install-Driver.bat"   "$base\scripts\"
+          Copy-Item "scripts\Uninstall-Driver.bat" "$base\scripts\"
+          Copy-Item "scripts\Manage-Service.bat"   "$base\scripts\"
+
+          # Zip everything
+          $zip = "FileMonitor-v$v-win-x64.zip"
+          Compress-Archive -Path "$base\*" -DestinationPath $zip -Force
+          Write-Host "Created $zip"
+          "ZIP_NAME=$zip" | Out-File $env:GITHUB_OUTPUT -Append
+        id: pkg
+
+      # ── 9. Create GitHub Release ──────────────────────────────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.TAG }}
+          name: FileMonitor v${{ steps.ver.outputs.VERSION }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          files: ${{ steps.pkg.outputs.ZIP_NAME }}

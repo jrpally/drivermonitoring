@@ -4,5 +4,10 @@
     <BaseOutputPath>$(MSBuildThisFileDirectory)bin\</BaseOutputPath>
     <OutputPath>$(BaseOutputPath)$(Configuration)\$(TargetFramework)\</OutputPath>
     <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)build\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+    <!-- Default version — overridden by CI via /p:Version=x.y.z -->
+    <Version Condition="'$(Version)' == ''">1.0.0</Version>
+    <AssemblyVersion Condition="'$(AssemblyVersion)' == ''">$(Version).0</AssemblyVersion>
+    <FileVersion Condition="'$(FileVersion)' == ''">$(Version).0</FileVersion>
+    <InformationalVersion Condition="'$(InformationalVersion)' == ''">$(Version)</InformationalVersion>
   </PropertyGroup>
 </Project>
