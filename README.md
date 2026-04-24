@@ -38,12 +38,40 @@ shutdown /r /t 0
 
 > **Production deployments** require a proper EV code-signing certificate and WHQL submission.
 
-### 1.2 Run FileMonitor.exe
+### 1.2 Download and extract the release
 
-Download `FileMonitor.exe` from the [Releases](https://github.com/jrpally/drivermonitoring/releases) page and run it in an elevated terminal:
+1. Go to the [Releases](https://github.com/jrpally/drivermonitoring/releases) page and download the latest `FileMonitor-vX.Y.Z-win-x64.zip`.
+
+2. Extract it — right-click the zip in Explorer and choose **Extract All**, or use PowerShell:
+
+   ```powershell
+   Expand-Archive -Path FileMonitor-v1.0.0-win-x64.zip -DestinationPath C:\FileMonitor
+   ```
+
+3. After extraction the layout is:
+
+   ```
+   C:\FileMonitor\
+   ├── installer\
+   │   └── FileMonitor.exe          ← the all-in-one launcher (run this)
+   ├── client\
+   │   ├── FileMonitor.Client.dll   ← C# SDK — reference this from your project
+   │   └── FileMonitor.Client.deps.json
+   ├── driver\
+   │   ├── FileMonitorDriver.sys
+   │   └── FileMonitorDriver.inf
+   └── scripts\
+       ├── Install-Driver.bat
+       ├── Uninstall-Driver.bat
+       └── Manage-Service.bat
+   ```
+
+### 1.3 Run FileMonitor.exe
+
+Open an **elevated** (Administrator) terminal and run:
 
 ```cmd
-FileMonitor.exe
+C:\FileMonitor\installer\FileMonitor.exe
 ```
 
 It will automatically:
@@ -77,7 +105,7 @@ Starting service...       OK
 
 Press **Ctrl+C** to stop. This stops the service, unloads the driver, and removes all installed files.
 
-### 1.3 Verify the driver is loaded
+### 1.4 Verify the driver is loaded
 
 ```cmd
 fltmc filters
@@ -93,13 +121,41 @@ FileMonitor exposes a **gRPC server** on `http://localhost:50051`. Any gRPC-capa
 
 ### 2.1 C# — using the FileMonitor.Client SDK
 
-The easiest way to consume events from C# is the pre-built `FileMonitor.Client` library.
+The pre-built `FileMonitor.Client.dll` is the easiest way to subscribe to events from C#. It is included in every release under the `client\` folder.
 
-**Reference the library** (project reference for development, or copy the DLL for distribution):
+#### Where to find the SDK
+
+After extracting the release zip:
+
+```
+C:\FileMonitor\client\FileMonitor.Client.dll
+C:\FileMonitor\client\FileMonitor.Client.deps.json
+```
+
+#### Add it to your project
+
+**Option A — copy the DLL** (recommended for distribution):
+
+1. Copy `FileMonitor.Client.dll` (and `FileMonitor.Client.deps.json`) into your project directory, e.g. `libs\`.
+2. Add a reference in your `.csproj`:
+
+   ```xml
+   <ItemGroup>
+     <Reference Include="FileMonitor.Client">
+       <HintPath>libs\FileMonitor.Client.dll</HintPath>
+     </Reference>
+   </ItemGroup>
+   ```
+
+**Option B — project reference** (if you cloned this repository):
 
 ```xml
-<ProjectReference Include="path\to\FileMonitor.Client\FileMonitor.Client.csproj" />
+<ItemGroup>
+  <ProjectReference Include="..\path\to\driverproject\src\FileMonitor.Client\FileMonitor.Client.csproj" />
+</ItemGroup>
 ```
+
+> The SDK targets `net8.0`. Your consuming project must also target `net8.0` or later.
 
 **Subscribe to all events:**
 
