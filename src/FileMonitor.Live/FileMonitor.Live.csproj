@@ -1,5 +1,5 @@
 <!-- Author: Rene Pally -->
-<Project Sdk="Microsoft.NET.Sdk.Web">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -15,25 +15,24 @@
     <RootNamespace>FileMonitor.Live</RootNamespace>
   </PropertyGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Grpc.AspNetCore"  Version="2.62.0" />
-    <PackageReference Include="Google.Protobuf"   Version="3.27.1" />
-    <PackageReference Include="Grpc.Tools"        Version="2.64.0" PrivateAssets="All" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Protobuf Include="..\..\proto\file_monitor.proto"
-              GrpcServices="Server"
-              Link="Protos\file_monitor.proto" />
-  </ItemGroup>
-
-  <!-- Embed the driver binary and INF as resources -->
+  <!-- Embed the minifilter driver -->
   <ItemGroup>
     <EmbeddedResource Include="$(MSBuildThisFileDirectory)..\..\bin\$(Configuration)\x64\FileMonitorDriver.sys"
                       LogicalName="FileMonitorDriver.sys"
                       Condition="Exists('$(MSBuildThisFileDirectory)..\..\bin\$(Configuration)\x64\FileMonitorDriver.sys')" />
     <EmbeddedResource Include="$(MSBuildThisFileDirectory)..\driver\FileMonitorDriver\FileMonitorDriver.inf"
                       LogicalName="FileMonitorDriver.inf" />
+  </ItemGroup>
+
+  <!--
+    Embed the Windows service executable.
+    Produced by: dotnet publish FileMonitor.Service -r win-x64 -\-self-contained /p:PublishSingleFile=true -o bin\<cfg>\publish\service
+    The CI workflow runs this step explicitly before publishing FileMonitor.Live.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)..\..\bin\$(Configuration)\publish\service\FileMonitor.Service.exe"
+                      LogicalName="FileMonitor.Service.exe"
+                      Condition="Exists('$(MSBuildThisFileDirectory)..\..\bin\$(Configuration)\publish\service\FileMonitor.Service.exe')" />
   </ItemGroup>
 
 </Project>

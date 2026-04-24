@@ -147,7 +147,24 @@ jobs:
           Write-Host "=== .NET build output ==="
           Get-ChildItem bin\Release -Recurse -File -Include *.exe,*.dll,*.sys | Format-Table FullName,Length -AutoSize
 
-      # ── 7. Publish self-contained Live app ────────────────────────────────────
+      # ── 7. Publish FileMonitor.Service (for embedding in FileMonitor.exe) ──────
+      - name: Publish FileMonitor.Service (single-file, for embedding)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $v  = "${{ steps.ver.outputs.VERSION }}"
+          $av = "${{ steps.ver.outputs.ASSEMBLY_VERSION }}"
+          Write-Host "=== Publishing FileMonitor.Service as single-file for embedding ==="
+          dotnet publish src\FileMonitor.Service\FileMonitor.Service.csproj `
+            -c Release -r win-x64 --self-contained `
+            /p:PublishSingleFile=true `
+            /p:Version=$v /p:AssemblyVersion=$av /p:FileVersion=$av `
+            /p:SkipBuildDriver=true `
+            -o "bin\Release\publish\service"
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish FileMonitor.Service failed with exit code $LASTEXITCODE" }
+          Get-Item "bin\Release\publish\service\FileMonitor.Service.exe" | Select-Object Name,Length
+
+      # ── 8. Publish self-contained FileMonitor.exe (embeds driver + service) ───
       - name: Publish FileMonitor.Live (single-file)
         shell: pwsh
         run: |
@@ -161,8 +178,10 @@ jobs:
             /p:SkipBuildDriver=true `
             -o "staging\live"
           if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE" }
+          Write-Host "=== FileMonitor.exe ==="
+          Get-Item "staging\live\FileMonitor.exe" | Select-Object Name,Length
 
-      # ── 8. Package artifacts ──────────────────────────────────────────────────
+      # ── 10. Package artifacts ─────────────────────────────────────────────────
       - name: Package release artifacts
         id: pkg
         shell: pwsh
@@ -176,10 +195,9 @@ jobs:
           Copy-Item "bin\Release\x64\FileMonitorDriver.sys" "$base\driver\"
           Copy-Item "bin\Release\x64\FileMonitorDriver.inf" "$base\driver\"
 
-          # Windows Service
-          $null = New-Item "$base\service" -ItemType Directory -Force
-          Copy-Item "bin\Release\net8.0-windows\win-x64\*" "$base\service\" `
-            -Recurse -Exclude "*.pdb","*.xml"
+          # FileMonitor.exe — the all-in-one installer/launcher
+          $null = New-Item "$base\installer" -ItemType Directory -Force
+          Copy-Item "staging\live\FileMonitor.exe" "$base\installer\"
 
           # Client library
           $null = New-Item "$base\client" -ItemType Directory -Force
@@ -199,7 +217,7 @@ jobs:
           Write-Host "Created $zip"
           "ZIP_NAME=$zip" | Out-File $env:GITHUB_OUTPUT -Append
 
-      # ── 9. Upload workflow artifact (every build) ────────────────────────────
+      # ── 11. Upload workflow artifact (every build) ───────────────────────────
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -208,7 +226,7 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-      # ── 10. Create GitHub Release (tags only) ────────────────────────────────
+      # ── 12. Create GitHub Release (tags only) ────────────────────────────────
       - name: Create GitHub Release
         if: steps.ver.outputs.IS_RELEASE == 'true'
         uses: softprops/action-gh-release@v2
@@ -219,4 +237,5 @@ jobs:
           draft: false
           prerelease: false
           files: ${{ steps.pkg.outputs.ZIP_NAME }}
+
 
