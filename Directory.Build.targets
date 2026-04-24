@@ -2,7 +2,7 @@
 <Project>
   <!-- Build the minifilter driver via Build-Driver.ps1 (triggered by the Service project) -->
   <Target Name="BuildDriver" BeforeTargets="Build"
-          Condition="'$(MSBuildProjectName)' == 'FileMonitor.Service' OR '$(MSBuildProjectName)' == 'FileMonitor'"
+          Condition="'$(SkipBuildDriver)' != 'true' AND ('$(MSBuildProjectName)' == 'FileMonitor.Service' OR '$(MSBuildProjectName)' == 'FileMonitor')"
           Inputs="$(MSBuildThisFileDirectory)src\driver\FileMonitorDriver\driver.c;$(MSBuildThisFileDirectory)src\driver\FileMonitorDriver\driver.h;$(MSBuildThisFileDirectory)src\driver\FileMonitorDriver\shared.h"
           Outputs="$(MSBuildThisFileDirectory)bin\$(Configuration)\x64\FileMonitorDriver.sys">
     <Exec Command="powershell -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)scripts\Build-Driver.ps1&quot; -Configuration $(Configuration)"

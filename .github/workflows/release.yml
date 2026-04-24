@@ -25,22 +25,30 @@ jobs:
         id: ver
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           $ref = "${{ github.ref }}"
           if ($ref -like 'refs/tags/v*') {
             # Triggered by a tag — use the tag as the version
-            $tag     = "${{ github.ref_name }}"
-            $version = $tag.TrimStart('v')
+            $tag            = "${{ github.ref_name }}"
+            $version        = $tag.TrimStart('v')          # e.g. 1.2.3
+            $assemblyVersion = "$version.0"                # e.g. 1.2.3.0
+            $isRelease      = 'true'
           } else {
-            # Triggered by a branch push — use 0.0.0-<short-sha> as a dev version
-            $sha     = "${{ github.sha }}".Substring(0,7)
-            $branch  = "${{ github.ref_name }}" -replace '[^a-zA-Z0-9\-]','-'
-            $version = "0.0.0-$branch.$sha"
-            $tag     = ""
+            # Triggered by a branch push — informational pre-release version
+            $sha            = "${{ github.sha }}".Substring(0,7)
+            $branch         = "${{ github.ref_name }}" -replace '[^a-zA-Z0-9\-]','-'
+            $version        = "0.0.0-$branch.$sha"         # e.g. 0.0.0-main.a1b2c3d
+            $assemblyVersion = "0.0.0.0"                   # AssemblyVersion must be numeric
+            $tag            = ""
+            $isRelease      = 'false'
           }
-          "VERSION=$version" | Out-File $env:GITHUB_OUTPUT -Append
-          "TAG=$tag"         | Out-File $env:GITHUB_OUTPUT -Append
-          "IS_RELEASE=$($ref -like 'refs/tags/v*' ? 'true' : 'false')" | Out-File $env:GITHUB_OUTPUT -Append
-          Write-Host "Building version $version (is_release=$($ref -like 'refs/tags/v*'))"
+          "VERSION=$version"                | Out-File $env:GITHUB_OUTPUT -Append
+          "ASSEMBLY_VERSION=$assemblyVersion" | Out-File $env:GITHUB_OUTPUT -Append
+          "TAG=$tag"                        | Out-File $env:GITHUB_OUTPUT -Append
+          "IS_RELEASE=$isRelease"           | Out-File $env:GITHUB_OUTPUT -Append
+          Write-Host "Version          : $version"
+          Write-Host "Assembly version : $assemblyVersion"
+          Write-Host "Is release       : $isRelease"
 
       # ── 3. Toolchain ─────────────────────────────────────────────────────────
       - name: Set up .NET 8
@@ -51,22 +59,30 @@ jobs:
       - name: Install Windows Driver Kit (WDK)
         shell: pwsh
         run: |
-          # WDK for Windows 11 24H2 (10.0.26100)
-          $wdkUrl   = "https://go.microsoft.com/fwlink/?linkid=2249371"
+          $ErrorActionPreference = "Stop"
+          $wdkUrl    = "https://go.microsoft.com/fwlink/?linkid=2249371"
           $installer = "$env:TEMP\wdksetup.exe"
-          Write-Host "Downloading WDK..."
+          Write-Host "Downloading WDK from $wdkUrl ..."
           Invoke-WebRequest -Uri $wdkUrl -OutFile $installer -UseBasicParsing
-          Write-Host "Installing WDK silently..."
+          Write-Host "Running WDK installer silently ..."
           $proc = Start-Process -Wait -PassThru -FilePath $installer `
                     -ArgumentList "/quiet /norestart /ceip off"
-          if ($proc.ExitCode -ne 0) { throw "WDK installer exited with code $($proc.ExitCode)" }
-          Write-Host "WDK installed."
+          if ($proc.ExitCode -ne 0) {
+            throw "WDK installer failed with exit code $($proc.ExitCode)"
+          }
+          # Verify expected include path exists
+          $kmInc = "C:\Program Files (x86)\Windows Kits\10\Include"
+          if (-not (Test-Path $kmInc)) {
+            throw "WDK include path not found: $kmInc"
+          }
+          Write-Host "WDK installed successfully. Include root: $kmInc"
 
       # ── 4. Stamp version ─────────────────────────────────────────────────────
       - name: Stamp DriverVer in INF
         if: steps.ver.outputs.IS_RELEASE == 'true'
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           $version = "${{ steps.ver.outputs.VERSION }}"
           $date    = (Get-Date -Format "MM/dd/yyyy")
           $inf     = "src\driver\FileMonitorDriver\FileMonitorDriver.inf"
@@ -75,37 +91,52 @@ jobs:
           Set-Content $inf $content -NoNewline
           Write-Host "DriverVer set to: $date,$version.0"
 
-      # ── 5. Build driver ───────────────────────────────────────────────────────
+      # ── 5. Build minifilter driver ────────────────────────────────────────────
+      #    Run explicitly so output is visible; MSBuild target skipped via flag below
       - name: Build minifilter driver
         shell: pwsh
-        run: .\scripts\Build-Driver.ps1 -Configuration Release
+        run: |
+          $ErrorActionPreference = "Stop"
+          .\scripts\Build-Driver.ps1 -Configuration Release
+          if ($LASTEXITCODE -ne 0) { throw "Build-Driver.ps1 failed with exit code $LASTEXITCODE" }
 
       # ── 6. Build .NET solution ────────────────────────────────────────────────
       - name: Restore NuGet packages
-        run: dotnet restore FileMonitor.sln
+        run: dotnet restore FileMonitor.sln --verbosity normal
 
       - name: Build solution (Release)
         shell: pwsh
         run: |
-          $v = "${{ steps.ver.outputs.VERSION }}"
-          dotnet build FileMonitor.sln -c Release --no-restore `
-            /p:Version=$v /p:AssemblyVersion="$v.0" /p:FileVersion="$v.0"
+          $ErrorActionPreference = "Stop"
+          $v  = "${{ steps.ver.outputs.VERSION }}"
+          $av = "${{ steps.ver.outputs.ASSEMBLY_VERSION }}"
+          # SkipBuildDriver=true prevents MSBuild from running Build-Driver.ps1 again
+          dotnet build FileMonitor.sln -c Release --no-restore --verbosity normal `
+            /p:Version=$v /p:AssemblyVersion=$av /p:FileVersion=$av `
+            /p:SkipBuildDriver=true
+          if ($LASTEXITCODE -ne 0) { throw "dotnet build failed with exit code $LASTEXITCODE" }
 
       # ── 7. Publish self-contained Live app ────────────────────────────────────
       - name: Publish FileMonitor.Live (single-file)
         shell: pwsh
         run: |
-          $v = "${{ steps.ver.outputs.VERSION }}"
+          $ErrorActionPreference = "Stop"
+          $v  = "${{ steps.ver.outputs.VERSION }}"
+          $av = "${{ steps.ver.outputs.ASSEMBLY_VERSION }}"
           dotnet publish src\FileMonitor.Live\FileMonitor.Live.csproj `
-            -c Release -r win-x64 --self-contained `
+            -c Release -r win-x64 --self-contained --verbosity normal `
             /p:PublishSingleFile=true `
-            /p:Version=$v /p:AssemblyVersion="$v.0" /p:FileVersion="$v.0" `
+            /p:Version=$v /p:AssemblyVersion=$av /p:FileVersion=$av `
+            /p:SkipBuildDriver=true `
             -o "staging\live"
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE" }
 
       # ── 8. Package artifacts ──────────────────────────────────────────────────
       - name: Package release artifacts
+        id: pkg
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           $v    = "${{ steps.ver.outputs.VERSION }}"
           $base = "staging"
 
@@ -119,10 +150,11 @@ jobs:
           Copy-Item "bin\Release\net8.0-windows\win-x64\*" "$base\service\" `
             -Recurse -Exclude "*.pdb","*.xml"
 
-          # Client library (for developers)
+          # Client library
           $null = New-Item "$base\client" -ItemType Directory -Force
           Copy-Item "bin\Release\net8.0\FileMonitor.Client.dll" "$base\client\"
-          Copy-Item "bin\Release\net8.0\FileMonitor.Client.deps.json" "$base\client\" -ErrorAction SilentlyContinue
+          $depJson = "bin\Release\net8.0\FileMonitor.Client.deps.json"
+          if (Test-Path $depJson) { Copy-Item $depJson "$base\client\" }
 
           # Deployment scripts
           $null = New-Item "$base\scripts" -ItemType Directory -Force
@@ -135,7 +167,6 @@ jobs:
           Compress-Archive -Path "$base\*" -DestinationPath $zip -Force
           Write-Host "Created $zip"
           "ZIP_NAME=$zip" | Out-File $env:GITHUB_OUTPUT -Append
-        id: pkg
 
       # ── 9. Create GitHub Release (tags only) ────────────────────────────────
       - name: Create GitHub Release
@@ -148,3 +179,4 @@ jobs:
           draft: false
           prerelease: false
           files: ${{ steps.pkg.outputs.ZIP_NAME }}
+
