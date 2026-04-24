@@ -12,10 +12,30 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 60
     permissions:
       contents: write   # required to create a GitHub release
 
     steps:
+      # ── 0. Diagnostics ───────────────────────────────────────────────────────
+      - name: Runner environment
+        shell: pwsh
+        run: |
+          Write-Host "=== Runner info ==="
+          Write-Host "OS       : $([System.Environment]::OSVersion.VersionString)"
+          Write-Host "Machine  : $env:COMPUTERNAME"
+          Write-Host "Ref      : ${{ github.ref }}"
+          Write-Host "SHA      : ${{ github.sha }}"
+          Write-Host "Workflow : ${{ github.workflow }} #${{ github.run_number }}"
+          Write-Host "=== Disk space ==="
+          Get-PSDrive C | Select-Object Used,Free | Format-Table -AutoSize
+          Write-Host "=== .NET SDKs ==="
+          dotnet --list-sdks
+          Write-Host "=== Windows Kits ==="
+          $kits = "C:\Program Files (x86)\Windows Kits\10\Include"
+          if (Test-Path $kits) { Get-ChildItem $kits -Directory | Select-Object Name }
+          else { Write-Host "(WDK not yet installed)" }
+
       # ── 1. Source ────────────────────────────────────────────────────────────
       - name: Checkout
         uses: actions/checkout@v4
@@ -62,20 +82,25 @@ jobs:
           $ErrorActionPreference = "Stop"
           $wdkUrl    = "https://go.microsoft.com/fwlink/?linkid=2249371"
           $installer = "$env:TEMP\wdksetup.exe"
-          Write-Host "Downloading WDK from $wdkUrl ..."
-          Invoke-WebRequest -Uri $wdkUrl -OutFile $installer -UseBasicParsing
-          Write-Host "Running WDK installer silently ..."
+          Write-Host "Downloading WDK (~1 GB) — this takes several minutes ..."
+          try {
+            Invoke-WebRequest -Uri $wdkUrl -OutFile $installer -UseBasicParsing -TimeoutSec 600
+          } catch {
+            throw "WDK download failed: $_"
+          }
+          Write-Host "Download complete ($('{0:N0}' -f (Get-Item $installer).Length) bytes). Running installer ..."
           $proc = Start-Process -Wait -PassThru -FilePath $installer `
                     -ArgumentList "/quiet /norestart /ceip off"
+          Write-Host "WDK installer exited with code: $($proc.ExitCode)"
           if ($proc.ExitCode -ne 0) {
             throw "WDK installer failed with exit code $($proc.ExitCode)"
           }
-          # Verify expected include path exists
           $kmInc = "C:\Program Files (x86)\Windows Kits\10\Include"
           if (-not (Test-Path $kmInc)) {
-            throw "WDK include path not found: $kmInc"
+            throw "WDK include path not found after install: $kmInc"
           }
-          Write-Host "WDK installed successfully. Include root: $kmInc"
+          $wdkVer = (Get-ChildItem $kmInc -Directory | Sort-Object Name -Descending | Select-Object -First 1).Name
+          Write-Host "WDK installed. Version: $wdkVer"
 
       # ── 4. Stamp version ─────────────────────────────────────────────────────
       - name: Stamp DriverVer in INF
@@ -97,8 +122,11 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          Write-Host "=== Building minifilter driver ==="
           .\scripts\Build-Driver.ps1 -Configuration Release
           if ($LASTEXITCODE -ne 0) { throw "Build-Driver.ps1 failed with exit code $LASTEXITCODE" }
+          Write-Host "=== Driver build output ==="
+          Get-ChildItem bin\Release\x64 -ErrorAction SilentlyContinue | Format-Table Name,Length,LastWriteTime -AutoSize
 
       # ── 6. Build .NET solution ────────────────────────────────────────────────
       - name: Restore NuGet packages
@@ -110,11 +138,14 @@ jobs:
           $ErrorActionPreference = "Stop"
           $v  = "${{ steps.ver.outputs.VERSION }}"
           $av = "${{ steps.ver.outputs.ASSEMBLY_VERSION }}"
+          Write-Host "=== dotnet build — version=$v assemblyVersion=$av ==="
           # SkipBuildDriver=true prevents MSBuild from running Build-Driver.ps1 again
           dotnet build FileMonitor.sln -c Release --no-restore --verbosity normal `
             /p:Version=$v /p:AssemblyVersion=$av /p:FileVersion=$av `
             /p:SkipBuildDriver=true
           if ($LASTEXITCODE -ne 0) { throw "dotnet build failed with exit code $LASTEXITCODE" }
+          Write-Host "=== .NET build output ==="
+          Get-ChildItem bin\Release -Recurse -File -Include *.exe,*.dll,*.sys | Format-Table FullName,Length -AutoSize
 
       # ── 7. Publish self-contained Live app ────────────────────────────────────
       - name: Publish FileMonitor.Live (single-file)
