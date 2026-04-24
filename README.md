@@ -218,34 +218,24 @@ bcdedit /set testsigning off
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────┐
-│                   Client Apps                       │
-│           (Console, GUI, other services)            │
-│                                                     │
-│   FileMonitor.Client  ──── gRPC (HTTP/2) ────┐     │
-└──────────────────────────────────────────────┼─────┘
-                                               │
-┌──────────────────────────────────────────────┼─────┐
-│              FileMonitor.Service              │     │
-│          (Windows Service + gRPC Server)      │     │
-│                                               ▼     │
-│   ┌──────────────────┐   ┌──────────────────┐       │
-│   │  Driver Listener │──▶│ Event Broadcaster │      │
-│   │  (BackgroundSvc) │   │  (fan-out)        │      │
-│   └────────┬─────────┘   └──────────────────┘       │
-│            │ FilterGetMessage                        │
-└────────────┼────────────────────────────────────────┘
-             │  Filter Communication Port
-┌────────────┼────────────────────────────────────────┐
-│            ▼                                         │
-│   FileMonitorDriver.sys  (minifilter)                │
-│                                                      │
-│   Intercepts: Create, Write, Delete, Rename,         │
-│               SetInfo, Cleanup                       │
-│                                                      │
-│   Attaches to NTFS volumes via Filter Manager        │
-└──────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph clients["Client Apps (Console, GUI, other services)"]
+        FC["FileMonitor.Client"]
+    end
+
+    subgraph service["FileMonitor.Service (Windows Service + gRPC Server)"]
+        DL["Driver Listener\n(BackgroundSvc)"]
+        EB["Event Broadcaster\n(fan-out)"]
+        DL -->|fan-out| EB
+    end
+
+    subgraph driver["FileMonitorDriver.sys (minifilter)"]
+        MF["Intercepts: Create, Write, Delete, Rename, SetInfo, Cleanup\nAttaches to NTFS volumes via Filter Manager"]
+    end
+
+    FC -->|"gRPC (HTTP/2)"| EB
+    DL -->|"FilterGetMessage\n(Filter Communication Port)"| MF
 ```
 
 ## Project Structure
