@@ -1,0 +1,5 @@
+;
+; FileMonitorDriver.def - Module definition file for the minifilter driver
+; Author: Rene Pally
+;
+LIBRARY FileMonitorDriver.sys

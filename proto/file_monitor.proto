@@ -1,0 +1,81 @@
+// Author: Rene Pally
+
+syntax = "proto3";
+
+option csharp_namespace = "FileMonitor.Grpc";
+
+package filemonitor;
+
+// The FileMonitor service exposed by the Windows service.
+// Clients connect here to subscribe to file events and control monitoring.
+service FileMonitorService {
+  // Subscribe to a stream of file system events.
+  rpc Subscribe (SubscribeRequest) returns (stream FileEvent);
+
+  // Start monitoring on the driver.
+  rpc StartMonitoring (MonitoringRequest) returns (MonitoringResponse);
+
+  // Stop monitoring on the driver.
+  rpc StopMonitoring (MonitoringRequest) returns (MonitoringResponse);
+
+  // Get the current monitoring status.
+  rpc GetStatus (StatusRequest) returns (StatusResponse);
+}
+
+message SubscribeRequest {
+  // Optional: filter by event types (bitmask). 0 = all events.
+  uint32 event_filter = 1;
+
+  // Optional: filter by path prefix.
+  string path_filter = 2;
+}
+
+message FileEvent {
+  // The type of file event.
+  FileEventType event_type = 1;
+
+  // Full file path.
+  string file_path = 2;
+
+  // Process ID that caused the event.
+  uint32 process_id = 3;
+
+  // Thread ID that caused the event.
+  uint32 thread_id = 4;
+
+  // Timestamp in UTC (ticks).
+  int64 timestamp = 5;
+
+  // Process name (resolved by the service).
+  string process_name = 6;
+}
+
+enum FileEventType {
+  FILE_EVENT_UNKNOWN  = 0;
+  FILE_EVENT_CREATE   = 1;
+  FILE_EVENT_CLOSE    = 2;
+  FILE_EVENT_READ     = 4;
+  FILE_EVENT_WRITE    = 8;
+  FILE_EVENT_DELETE   = 16;
+  FILE_EVENT_RENAME   = 32;
+  FILE_EVENT_SET_INFO = 64;
+  FILE_EVENT_CLEANUP  = 128;
+}
+
+message MonitoringRequest {
+  // Reserved for future use (e.g., per-volume control).
+}
+
+message MonitoringResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message StatusRequest {}
+
+message StatusResponse {
+  bool is_monitoring = 1;
+  bool is_driver_connected = 2;
+  uint64 events_processed = 3;
+  uint32 active_subscribers = 4;
+}

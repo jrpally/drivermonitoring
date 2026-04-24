@@ -1,0 +1,16 @@
+<!-- Author: Rene Pally -->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>FileMonitor.SampleApp</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FileMonitor.Client\FileMonitor.Client.csproj" />
+  </ItemGroup>
+
+</Project>

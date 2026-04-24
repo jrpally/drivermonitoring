@@ -1,0 +1,72 @@
+;
+; FileMonitorDriver.inf - Install information for the FileMonitor minifilter driver
+; Author: Rene Pally
+;
+
+[Version]
+Signature   = "$Windows NT$"
+Class       = "ActivityMonitor"
+ClassGuid   = {b86dff51-a31e-4bac-b3cf-e8cfe75c9fc2}
+Provider    = %ProviderString%
+DriverVer   = 04/17/2026,1.0.0.0
+CatalogFile = FileMonitorDriver.cat
+
+[DestinationDirs]
+DefaultDestDir       = 12  ; %windir%\system32\drivers
+FileMonitorDriver.DriverFiles = 12
+
+[SourceDisksNames]
+1 = %DiskName%
+
+[SourceDisksFiles]
+FileMonitorDriver.sys = 1
+
+; -------------------- Install Section --------------------
+
+[DefaultInstall.NTamd64]
+OptionDesc = %ServiceDescription%
+CopyFiles  = FileMonitorDriver.DriverFiles
+
+[DefaultInstall.NTamd64.Services]
+AddService = %ServiceName%,,FileMonitorDriver.Service
+
+[DefaultUninstall.NTamd64]
+DelFiles = FileMonitorDriver.DriverFiles
+
+[DefaultUninstall.NTamd64.Services]
+DelService = %ServiceName%,0x200
+
+; -------------------- Service Section --------------------
+
+[FileMonitorDriver.Service]
+DisplayName    = %ServiceDisplayName%
+Description    = %ServiceDescription%
+ServiceBinary  = %12%\FileMonitorDriver.sys
+ServiceType    = 2  ; SERVICE_FILE_SYSTEM_DRIVER
+StartType      = 3  ; SERVICE_DEMAND_START
+ErrorControl   = 1  ; SERVICE_ERROR_NORMAL
+LoadOrderGroup = "FSFilter Activity Monitor"
+AddReg         = FileMonitorDriver.AddRegistry
+
+[FileMonitorDriver.AddRegistry]
+HKR,"Instances","DefaultInstance",0x00000000,%DefaultInstance%
+HKR,"Instances\"%Instance1.Name%,"Altitude",0x00000000,%Instance1.Altitude%
+HKR,"Instances\"%Instance1.Name%,"Flags",0x00010001,%Instance1.Flags%
+
+; -------------------- Copy Files --------------------
+
+[FileMonitorDriver.DriverFiles]
+FileMonitorDriver.sys
+
+; -------------------- Strings --------------------
+
+[Strings]
+ProviderString      = "FileMonitor"
+ServiceName         = "FileMonitorDriver"
+ServiceDisplayName  = "FileMonitor Minifilter Driver"
+ServiceDescription  = "Monitors file system activity and reports to user mode."
+DiskName            = "FileMonitor Driver Installation Disk"
+DefaultInstance     = "FileMonitorDriver Instance"
+Instance1.Name      = "FileMonitorDriver Instance"
+Instance1.Altitude  = "370020"
+Instance1.Flags     = 0x0
